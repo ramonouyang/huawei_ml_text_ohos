@@ -10,8 +10,31 @@ import 'models.dart';
 /// ```dart
 /// final analyzer = HuaweiMlTextAnalyzer();
 /// await analyzer.init();
+///
+/// // Basic usage
 /// final result = await analyzer.recognizeText('/path/to/image.jpg');
 /// print(result.text);
+///
+/// // With configuration
+/// final result = await analyzer.recognizeText(
+///   '/path/to/image.jpg',
+///   config: TextRecognitionConfig(language: 'zh', isFastMode: true),
+/// );
+///
+/// // Access position and confidence
+/// for (final block in result.blocks) {
+///   print('Block: ${block.stringValue}');
+///   print('  Rect: ${block.borderRect}');
+///   print('  Confidence: ${block.confidence}');
+///   print('  Language: ${block.language}');
+///   for (final line in block.lines) {
+///     print('  Line: ${line.stringValue}');
+///     for (final word in line.words) {
+///       print('    Word: ${word.stringValue} @ ${word.borderRect}');
+///     }
+///   }
+/// }
+///
 /// await analyzer.release();
 /// ```
 class HuaweiMlTextAnalyzer {
@@ -34,15 +57,23 @@ class HuaweiMlTextAnalyzer {
   /// Recognize text in the image at [imagePath].
   ///
   /// [imagePath] must be an absolute file path accessible by the app.
-  /// Returns the full recognition result with blocks, lines, and words.
-  Future<TextRecognitionResult> recognizeText(String imagePath) async {
+  /// [config] optionally controls language, speed, and direction detection.
+  /// Returns the full recognition result with blocks, lines, words,
+  /// position coordinates, confidence, and language info.
+  Future<TextRecognitionResult> recognizeText(
+    String imagePath, {
+    TextRecognitionConfig? config,
+  }) async {
     if (!_initialized) {
       throw StateError(
           'HuaweiMlTextAnalyzer not initialized. Call init() first.');
     }
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'text#recognizeText',
-      {'imagePath': imagePath},
+      {
+        'imagePath': imagePath,
+        if (config != null) 'config': config.toMap(),
+      },
     );
     if (result == null) {
       throw PlatformException(

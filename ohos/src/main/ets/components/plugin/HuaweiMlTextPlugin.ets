@@ -76,7 +76,7 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
 
   /**
    * Recognize text in the image at the given path.
-   * Input: { imagePath: string }
+   * Input: { imagePath: string, config?: { language?, languageList?, isFastMode?, isDirectionSupported? } }
    * Output: { blocks: [...], stringValue: string }
    */
   private handleRecognizeText(call: MethodCall, result: MethodResult): void {
@@ -92,19 +92,18 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
 
     try {
-      // Build VisionInfo from the image path
       const visionInfo: textRecognition.VisionInfo = {
         uri: imagePath
       };
 
-      const config: textRecognition.TextRecognitionConfiguration = {
-        // Default: recognize all languages
-      };
+      // Build configuration from optional config parameter
+      const configMap = call.argument('config') as Record<string, Object> | undefined;
+      const config = this.buildConfig(configMap);
 
       textRecognition.recognizeText(visionInfo, config)
         .then((recognitionResult: textRecognition.TextRecognitionResult) => {
           const resultMap = this.convertResult(recognitionResult);
-          console.info(TAG, `Recognized ${resultMap.blocks.length} blocks`);
+          console.info(TAG, `Recognized ${(resultMap as { blocks: object[] }).blocks.length} blocks`);
           result.success(resultMap);
         })
         .catch((err: Error) => {
@@ -115,6 +114,32 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
       console.error(TAG, `recognizeText error: ${err}`);
       result.error('RECOGNIZE_FAILED', `Recognition failed: ${err}`, null);
     }
+  }
+
+  /**
+   * Build TextRecognitionConfiguration from Dart config map.
+   */
+  private buildConfig(configMap: Record<string, Object> | undefined): textRecognition.TextRecognitionConfiguration {
+    const config: textRecognition.TextRecognitionConfiguration = {};
+
+    if (configMap) {
+      if (configMap['language'] !== undefined) {
+        config.language = configMap['language'] as string;
+      }
+      if (configMap['languageList'] !== undefined) {
+        config.languageList = configMap['languageList'] as string[];
+      }
+      if (configMap['isFastMode'] !== undefined) {
+        config.textType = (configMap['isFastMode'] as boolean)
+          ? textRecognition.TextType.TEXT_TYPE_FAST
+          : textRecognition.TextType.TEXT_TYPE_LOOSE;
+      }
+      if (configMap['isDirectionSupported'] !== undefined) {
+        config.isDirectionSupported = configMap['isDirectionSupported'] as boolean;
+      }
+    }
+
+    return config;
   }
 
   /**
@@ -160,13 +185,31 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
    *     {
    *       stringValue: string,
    *       language: string,
+   *       confidence: number,
+   *       angle: number,
+   *       isVertical: boolean,
    *       vertexes: [{x, y}],
+   *       cornerPoints: [{x, y}],
+   *       borderRect: {left, top, right, bottom},
    *       lines: [
    *         {
    *           stringValue: string,
+   *           language: string,
+   *           confidence: number,
+   *           angle: number,
+   *           isVertical: boolean,
    *           vertexes: [{x, y}],
+   *           cornerPoints: [{x, y}],
+   *           borderRect: {left, top, right, bottom},
    *           words: [
-   *             { stringValue: string, vertexes: [{x, y}] }
+   *             {
+   *               stringValue: string,
+   *               language: string,
+   *               confidence: number,
+   *               vertexes: [{x, y}],
+   *               cornerPoints: [{x, y}],
+   *               borderRect: {left, top, right, bottom}
+   *             }
    *           ]
    *         }
    *       ]
@@ -178,13 +221,28 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     const blocks = (result.blocks ?? []).map((block) => ({
       stringValue: block.stringValue ?? '',
       language: block.language ?? '',
+      confidence: block.confidence ?? -1,
+      angle: block.angle ?? 0,
+      isVertical: block.isVertical ?? false,
       vertexes: this.convertPoints(block.vertexes),
+      cornerPoints: this.convertPoints(block.cornerPoints),
+      borderRect: this.convertRect(block.borderRect),
       lines: (block.lines ?? []).map((line) => ({
         stringValue: line.stringValue ?? '',
+        language: line.language ?? '',
+        confidence: line.confidence ?? -1,
+        angle: line.angle ?? 0,
+        isVertical: line.isVertical ?? false,
         vertexes: this.convertPoints(line.vertexes),
+        cornerPoints: this.convertPoints(line.cornerPoints),
+        borderRect: this.convertRect(line.borderRect),
         words: (line.words ?? []).map((word) => ({
           stringValue: word.stringValue ?? '',
+          language: word.language ?? '',
+          confidence: word.confidence ?? -1,
           vertexes: this.convertPoints(word.vertexes),
+          cornerPoints: this.convertPoints(word.cornerPoints),
+          borderRect: this.convertRect(word.borderRect),
         })),
       })),
     }));
@@ -200,5 +258,15 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
   private convertPoints(points: textRecognition.PixelPoint[] | undefined): object[] {
     if (!points) return [];
     return points.map((p) => ({ x: p.x ?? 0, y: p.y ?? 0 }));
+  }
+
+  private convertRect(rect: textRecognition.Rect | undefined): object | null {
+    if (!rect) return null;
+    return {
+      left: rect.left ?? 0,
+      top: rect.top ?? 0,
+      right: rect.right ?? 0,
+      bottom: rect.bottom ?? 0,
+    };
   }
 }
