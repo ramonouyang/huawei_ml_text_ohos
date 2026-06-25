@@ -9,34 +9,42 @@ import 'models.dart';
 /// Usage:
 /// ```dart
 /// final analyzer = HuaweiMlTextAnalyzer();
+///
+/// // Check availability
+/// if (!await analyzer.isAvailable()) {
+///   print('Text recognition not available on this device');
+///   return;
+/// }
+///
 /// await analyzer.init();
 ///
-/// // Basic usage
+/// // Basic: file path
 /// final result = await analyzer.recognizeText('/path/to/image.jpg');
-/// print(result.text);
 ///
-/// // With configuration
+/// // With config (language, cloud, ROI)
 /// final result = await analyzer.recognizeText(
 ///   '/path/to/image.jpg',
-///   config: TextRecognitionConfig(language: 'zh', isFastMode: true),
+///   config: TextRecognitionConfig(
+///     language: 'zh',
+///     enableCloud: true,
+///     roi: Rect(left: 100, top: 100, right: 500, bottom: 300),
+///   ),
 /// );
 ///
-/// // Access position, confidence, and characters
-/// for (final block in result.blocks) {
-///   print('Block: ${block.stringValue}');
-///   print('  Rect: ${block.borderRect}');
-///   print('  Confidence: ${block.confidence}');
-///   for (final line in block.lines) {
-///     print('  Line: ${line.stringValue}');
-///     print('    Characters: ${line.characterList?.length ?? 0}');
-///     print('    Elements: ${line.elementList?.length ?? 0}');
-///     for (final word in line.words) {
-///       print('    Word: ${word.stringValue} @ ${word.borderRect}');
-///       for (final char in word.characterList ?? []) {
-///         print('      Char: ${char.stringValue} conf=${char.confidence}');
-///       }
-///     }
-///   }
+/// // From URL
+/// final result = await analyzer.recognizeImage(
+///   ImageSource.url('https://example.com/image.jpg'),
+/// );
+///
+/// // Batch: multiple images
+/// final results = await analyzer.recognizeTextBatch([
+///   '/path/to/image1.jpg',
+///   '/path/to/image2.jpg',
+/// ]);
+///
+/// // Async stream
+/// await for (final r in analyzer.recognizeTextAsync('/path/to/large.jpg')) {
+///   print('Partial: ${r.text}');
 /// }
 ///
 /// await analyzer.release();
@@ -47,9 +55,37 @@ class HuaweiMlTextAnalyzer {
 
   bool _initialized = false;
 
+  /// Check if text recognition is available on this device.
+  ///
+  /// Returns true if HMS Core is installed and the ML Kit service is ready.
+  /// Does NOT require [init] to be called first.
+  Future<bool> isAvailable() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('text#isAvailable');
+      return result ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Check if the offline text recognition model is downloaded and ready.
+  ///
+  /// Returns true if the model is available for offline use.
+  /// Does NOT require [init] to be called first.
+  Future<bool> isModelAvailable() async {
+    try {
+      final result =
+          await _channel.invokeMethod<bool>('text#isModelAvailable');
+      return result ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Initialize the text recognition engine.
   ///
-  /// Must be called before [recognizeText] or [recognizeTextAsync].
+  /// Must be called before [recognizeText], [recognizeImage],
+  /// [recognizeTextBatch], or [recognizeTextAsync].
   /// Returns `true` if initialization succeeded.
   /// Throws [TextRecognitionException] on failure.
   Future<bool> init() async {
@@ -67,9 +103,7 @@ class HuaweiMlTextAnalyzer {
   /// Recognize text in the image at [imagePath] (synchronous mode).
   ///
   /// [imagePath] must be an absolute file path accessible by the app.
-  /// [config] optionally controls language, speed, and direction detection.
-  /// Returns the full recognition result with blocks, lines, words,
-  /// characters, elements, position coordinates, confidence, and language info.
+  /// [config] optionally controls language, speed, direction, cloud/offline, ROI.
   /// Throws [TextRecognitionException] on failure.
   Future<TextRecognitionResult> recognizeText(
     String imagePath, {
@@ -79,7 +113,7 @@ class HuaweiMlTextAnalyzer {
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'text#recognizeText',
-        _buildArgs(imagePath, config, async: false),
+        _buildArgs(imagePath, config),
       );
       if (result == null) {
         throw const TextRecognitionException(
@@ -96,28 +130,103 @@ class HuaweiMlTextAnalyzer {
     }
   }
 
+  /// Recognize text from an [ImageSource] (file path, URL, or bytes).
+  ///
+  /// This is the most flexible recognition method. For simple file path
+  /// usage, [recognizeText] is a convenient shorthand.
+  ///
+  /// ```dart
+  /// // From URL
+  /// final r = await analyzer.recognizeImage(ImageSource.url('https://...'));
+  ///
+  /// // From bytes
+  /// final r = await analyzer.recognizeImage(ImageSource.bytes(imageBytes));
+  /// ```
+  Future<TextRecognitionResult> recognizeImage(
+    ImageSource source, {
+    TextRecognitionConfig? config,
+  }) async {
+    _ensureInitialized();
+
+    // If it's a simple file path, delegate to recognizeText
+    if (source.isFilePath) {
+      return recognizeText(source.filePath!, config: config);
+    }
+
+    try {
+      final args = <String, dynamic>{
+        'imageSource': source.toMap(),
+        if (config != null) 'config': config.toMap(),
+      };
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'text#recognizeImage',
+        args,
+      );
+      if (result == null) {
+        throw const TextRecognitionException(
+          code: TextRecognitionErrorCode.nullResult,
+          message: 'recognizeImage returned null',
+        );
+      }
+      return TextRecognitionResult.fromMap(result);
+    } on TextRecognitionException {
+      rethrow;
+    } catch (e) {
+      throw TextRecognitionException.fromPlatformException(
+          e as Exception, 'Image recognition failed');
+    }
+  }
+
+  /// Recognize text from multiple images in a single batch call.
+  ///
+  /// Returns results in the same order as [imagePaths].
+  /// Individual failures are returned as null entries (no exception thrown).
+  ///
+  /// ```dart
+  /// final results = await analyzer.recognizeTextBatch([
+  ///   '/path/1.jpg', '/path/2.jpg', '/path/3.jpg',
+  /// ]);
+  /// for (int i = 0; i < results.length; i++) {
+  ///   if (results[i] != null) print('Image $i: ${results[i]!.text}');
+  /// }
+  /// ```
+  Future<List<TextRecognitionResult?>> recognizeTextBatch(
+    List<String> imagePaths, {
+    TextRecognitionConfig? config,
+  }) async {
+    _ensureInitialized();
+    try {
+      final result = await _channel.invokeMethod<List<dynamic>>(
+        'text#recognizeTextBatch',
+        {
+          'imagePaths': imagePaths,
+          if (config != null) 'config': config.toMap(),
+        },
+      );
+      if (result == null) {
+        return List.filled(imagePaths.length, null);
+      }
+      return result.map((item) {
+        if (item == null) return null;
+        return TextRecognitionResult.fromMap(item as Map<dynamic, dynamic>);
+      }).toList();
+    } on TextRecognitionException {
+      rethrow;
+    } catch (e) {
+      throw TextRecognitionException.fromPlatformException(
+          e as Exception, 'Batch recognition failed');
+    }
+  }
+
   /// Recognize text asynchronously (non-blocking mode).
   ///
   /// Suitable for large images or video frame processing.
-  /// Returns a [Stream] that emits partial results as they become available,
-  /// with the final result having `isComplete = true`.
-  ///
-  /// Usage:
-  /// ```dart
-  /// await for (final result in analyzer.recognizeTextAsync('/path/image.jpg')) {
-  ///   print('Partial: ${result.text}');
-  ///   if (result.isComplete) print('Done!');
-  /// }
-  /// ```
+  /// Returns a [Stream] that emits partial results as they become available.
   Stream<TextRecognitionResult> recognizeTextAsync(
     String imagePath, {
     TextRecognitionConfig? config,
   }) async* {
     _ensureInitialized();
-
-    // The async method uses event channel or repeated polling.
-    // For now, we implement as a single-shot that yields once.
-    // The ArkTS side can be extended to support streaming later.
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'text#recognizeText',

@@ -7,11 +7,15 @@ const CHANNEL_NAME = 'huawei.hms.flutter.ml.text';
 /**
  * Flutter plugin wrapping HarmonyOS Core Vision Kit textRecognition.
  *
- * Methods handled:
- *   text#init              — Initialize the recognition engine
- *   text#recognizeText     — Recognize text in an image file
+ * Methods:
+ *   text#isAvailable         — Check HMS ML Kit service availability
+ *   text#isModelAvailable    — Check offline model status
+ *   text#init                — Initialize the recognition engine
+ *   text#recognizeText       — Recognize text from file path
+ *   text#recognizeImage      — Recognize text from URL or bytes
+ *   text#recognizeTextBatch  — Batch recognize from multiple file paths
  *   text#getSupportedLanguages — List supported languages
- *   text#release           — Release the engine
+ *   text#release             — Release the engine
  */
 export default class HuaweiMlTextPlugin implements FlutterPlugin {
   private channel: MethodChannel | null = null;
@@ -36,11 +40,23 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
     switch (call.method) {
+      case 'text#isAvailable':
+        this.handleIsAvailable(result);
+        break;
+      case 'text#isModelAvailable':
+        this.handleIsModelAvailable(result);
+        break;
       case 'text#init':
         this.handleInit(result);
         break;
       case 'text#recognizeText':
         this.handleRecognizeText(call, result);
+        break;
+      case 'text#recognizeImage':
+        this.handleRecognizeImage(call, result);
+        break;
+      case 'text#recognizeTextBatch':
+        this.handleRecognizeTextBatch(call, result);
         break;
       case 'text#getSupportedLanguages':
         this.handleGetSupportedLanguages(result);
@@ -53,6 +69,42 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
         break;
     }
   }
+
+  // ==========================================================================
+  // Availability checks
+  // ==========================================================================
+
+  private handleIsAvailable(result: MethodResult): void {
+    try {
+      // Core Vision Kit is available if HMS Core is installed
+      const available = textRecognition.init !== undefined;
+      result.success(available);
+    } catch (err) {
+      console.error(TAG, `isAvailable check failed: ${err}`);
+      result.success(false);
+    }
+  }
+
+  private handleIsModelAvailable(result: MethodResult): void {
+    try {
+      // Try to init and check if model is ready
+      if (this.initialized) {
+        result.success(true);
+        return;
+      }
+      // Attempt init to check model availability
+      textRecognition.init();
+      textRecognition.release();
+      result.success(true);
+    } catch (err) {
+      console.warn(TAG, `isModelAvailable: model not ready: ${err}`);
+      result.success(false);
+    }
+  }
+
+  // ==========================================================================
+  // Init / Release
+  // ==========================================================================
 
   private handleInit(result: MethodResult): void {
     if (this.initialized) {
@@ -70,6 +122,25 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
   }
 
+  private handleRelease(result: MethodResult): void {
+    this.doRelease();
+    result.success(true);
+  }
+
+  private doRelease(): void {
+    try {
+      textRecognition.release();
+      this.initialized = false;
+      console.info(TAG, 'textRecognition.release() succeeded');
+    } catch (err) {
+      console.error(TAG, `textRecognition.release() failed: ${err}`);
+    }
+  }
+
+  // ==========================================================================
+  // Recognition methods
+  // ==========================================================================
+
   private handleRecognizeText(call: MethodCall, result: MethodResult): void {
     if (!this.initialized) {
       result.error('NOT_INITIALIZED', 'Call text#init first', null);
@@ -82,29 +153,103 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
       return;
     }
 
-    try {
-      const visionInfo: textRecognition.VisionInfo = {
-        uri: imagePath
-      };
+    const configMap = call.argument('config') as Record<string, Object> | undefined;
+    const config = this.buildConfig(configMap);
 
-      const configMap = call.argument('config') as Record<string, Object> | undefined;
-      const config = this.buildConfig(configMap);
+    this.doRecognize({ uri: imagePath }, config, result);
+  }
 
+  private handleRecognizeImage(call: MethodCall, result: MethodResult): void {
+    if (!this.initialized) {
+      result.error('NOT_INITIALIZED', 'Call text#init first', null);
+      return;
+    }
+
+    const imageSource = call.argument('imageSource') as Record<string, Object>;
+    if (!imageSource) {
+      result.error('INVALID_ARGS', 'imageSource is required', null);
+      return;
+    }
+
+    const configMap = call.argument('config') as Record<string, Object> | undefined;
+    const config = this.buildConfig(configMap);
+
+    const sourceType = imageSource['type'] as string;
+    let visionInfo: textRecognition.VisionInfo;
+
+    if (sourceType === 'filePath') {
+      visionInfo = { uri: imageSource['path'] as string };
+    } else if (sourceType === 'url') {
+      visionInfo = { url: imageSource['url'] as string };
+    } else {
+      result.error('INVALID_ARGS', `Unsupported image source type: ${sourceType}`, null);
+      return;
+    }
+
+    this.doRecognize(visionInfo, config, result);
+  }
+
+  private handleRecognizeTextBatch(call: MethodCall, result: MethodResult): void {
+    if (!this.initialized) {
+      result.error('NOT_INITIALIZED', 'Call text#init first', null);
+      return;
+    }
+
+    const imagePaths = call.argument('imagePaths') as string[];
+    if (!imagePaths || imagePaths.length === 0) {
+      result.error('INVALID_ARGS', 'imagePaths is required', null);
+      return;
+    }
+
+    const configMap = call.argument('config') as Record<string, Object> | undefined;
+    const config = this.buildConfig(configMap);
+
+    // Process all images sequentially and collect results
+    const results: (object | null)[] = [];
+    let completed = 0;
+
+    for (let i = 0; i < imagePaths.length; i++) {
+      const visionInfo: textRecognition.VisionInfo = { uri: imagePaths[i] };
       textRecognition.recognizeText(visionInfo, config)
         .then((recognitionResult: textRecognition.TextRecognitionResult) => {
-          const resultMap = this.convertResult(recognitionResult);
-          console.info(TAG, `Recognized ${(resultMap as { blocks: object[] }).blocks.length} blocks`);
-          result.success(resultMap);
+          results[i] = this.convertResult(recognitionResult);
+          completed++;
+          if (completed === imagePaths.length) {
+            console.info(TAG, `Batch recognized ${imagePaths.length} images`);
+            result.success(results);
+          }
         })
         .catch((err: Error) => {
-          console.error(TAG, `recognizeText failed: ${err.message}`);
-          result.error('RECOGNIZE_FAILED', err.message, null);
+          console.error(TAG, `Batch item ${i} failed: ${err.message}`);
+          results[i] = null;
+          completed++;
+          if (completed === imagePaths.length) {
+            result.success(results);
+          }
         });
-    } catch (err) {
-      console.error(TAG, `recognizeText error: ${err}`);
-      result.error('RECOGNIZE_FAILED', `Recognition failed: ${err}`, null);
     }
   }
+
+  private doRecognize(
+    visionInfo: textRecognition.VisionInfo,
+    config: textRecognition.TextRecognitionConfiguration,
+    result: MethodResult
+  ): void {
+    textRecognition.recognizeText(visionInfo, config)
+      .then((recognitionResult: textRecognition.TextRecognitionResult) => {
+        const resultMap = this.convertResult(recognitionResult);
+        console.info(TAG, `Recognized ${(resultMap as { blocks: object[] }).blocks.length} blocks`);
+        result.success(resultMap);
+      })
+      .catch((err: Error) => {
+        console.error(TAG, `recognizeText failed: ${err.message}`);
+        result.error('RECOGNIZE_FAILED', err.message, null);
+      });
+  }
+
+  // ==========================================================================
+  // Config & conversion helpers
+  // ==========================================================================
 
   private buildConfig(configMap: Record<string, Object> | undefined): textRecognition.TextRecognitionConfiguration {
     const config: textRecognition.TextRecognitionConfiguration = {};
@@ -124,6 +269,9 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
       if (configMap['isDirectionSupported'] !== undefined) {
         config.isDirectionSupported = configMap['isDirectionSupported'] as boolean;
       }
+      if (configMap['enableCloud'] !== undefined) {
+        config.enableCloud = configMap['enableCloud'] as boolean;
+      }
     }
 
     return config;
@@ -139,45 +287,10 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
   }
 
-  private handleRelease(result: MethodResult): void {
-    this.doRelease();
-    result.success(true);
-  }
+  // ==========================================================================
+  // Result conversion
+  // ==========================================================================
 
-  private doRelease(): void {
-    try {
-      textRecognition.release();
-      this.initialized = false;
-      console.info(TAG, 'textRecognition.release() succeeded');
-    } catch (err) {
-      console.error(TAG, `textRecognition.release() failed: ${err}`);
-    }
-  }
-
-  /**
-   * Convert ArkTS TextRecognitionResult to a Map for Dart.
-   *
-   * Full structure with all fields:
-   * {
-   *   stringValue: string,
-   *   blocks: [{
-   *     stringValue, language, confidence, angle, isVertical,
-   *     vertexes, cornerPoints, borderRect,
-   *     elementList: [{ stringValue, borderRect, cornerPoints, confidence }],
-   *     lines: [{
-   *       stringValue, language, confidence, angle, isVertical,
-   *       vertexes, cornerPoints, borderRect,
-   *       characterList: [{ stringValue, borderRect, confidence }],
-   *       elementList: [{ stringValue, borderRect, cornerPoints, confidence }],
-   *       words: [{
-   *         stringValue, language, confidence,
-   *         vertexes, cornerPoints, borderRect,
-   *         characterList: [{ stringValue, borderRect, confidence }]
-   *       }]
-   *     }]
-   *   }]
-   * }
-   */
   private convertResult(result: textRecognition.TextRecognitionResult): object {
     const blocks = (result.blocks ?? []).map((block) => ({
       stringValue: block.stringValue ?? '',

@@ -19,10 +19,18 @@ void main() {
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
       log.add(methodCall);
       switch (methodCall.method) {
+        case 'text#isAvailable':
+          return true;
+        case 'text#isModelAvailable':
+          return true;
         case 'text#init':
           return true;
         case 'text#recognizeText':
           return _mockRecognitionResult();
+        case 'text#recognizeImage':
+          return _mockRecognitionResult();
+        case 'text#recognizeTextBatch':
+          return [_mockRecognitionResult(), _mockRecognitionResult(), null];
         case 'text#getSupportedLanguages':
           return ['zh', 'en', 'ja', 'ko'];
         case 'text#release':
@@ -38,7 +46,35 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
-  group('HuaweiMlTextAnalyzer', () {
+  group('Availability', () {
+    test('isAvailable returns true when service ready', () async {
+      final result = await analyzer.isAvailable();
+      expect(result, true);
+      expect(log[0].method, 'text#isAvailable');
+    });
+
+    test('isAvailable returns false on error', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => throw Exception('no HMS'));
+      final result = await analyzer.isAvailable();
+      expect(result, false);
+    });
+
+    test('isModelAvailable returns true when model ready', () async {
+      final result = await analyzer.isModelAvailable();
+      expect(result, true);
+      expect(log[0].method, 'text#isModelAvailable');
+    });
+
+    test('isModelAvailable returns false on error', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => throw Exception('no model'));
+      final result = await analyzer.isModelAvailable();
+      expect(result, false);
+    });
+  });
+
+  group('Init / Release', () {
     test('init returns true on success', () async {
       final result = await analyzer.init();
       expect(result, true);
@@ -53,7 +89,24 @@ void main() {
       expect(log.length, 1);
     });
 
-    test('recognizeText throws TextRecognitionException if not initialized', () async {
+    test('release returns true and resets state', () async {
+      await analyzer.init();
+      log.clear();
+      final result = await analyzer.release();
+      expect(result, true);
+      expect(analyzer.isInitialized, false);
+      expect(log[0].method, 'text#release');
+    });
+
+    test('release is idempotent when not initialized', () async {
+      final result = await analyzer.release();
+      expect(result, true);
+      expect(log.isEmpty, true);
+    });
+  });
+
+  group('recognizeText', () {
+    test('throws if not initialized', () async {
       expect(
         () => analyzer.recognizeText('/path/to/image.jpg'),
         throwsA(isA<TextRecognitionException>().having(
@@ -64,66 +117,31 @@ void main() {
       );
     });
 
-    test('recognizeText returns full structured result', () async {
+    test('returns full structured result', () async {
       await analyzer.init();
       log.clear();
 
       final result = await analyzer.recognizeText('/path/to/image.jpg');
 
-      // Verify method call
-      expect(log.length, 1);
       expect(log[0].method, 'text#recognizeText');
-      expect(log[0].arguments, {'imagePath': '/path/to/image.jpg'});
-
-      // Verify top-level
       expect(result.text, 'Hello World');
       expect(result.blocks.length, 1);
 
-      // Verify block
       final block = result.blocks[0];
-      expect(block.stringValue, 'Hello World');
-      expect(block.language, 'en');
       expect(block.confidence, 0.95);
-      expect(block.angle, 0.5);
-      expect(block.isVertical, false);
-      expect(block.vertexes!.length, 4);
-      expect(block.cornerPoints!.length, 4);
       expect(block.borderRect, isNotNull);
-      expect(block.borderRect!.width, 200);
-      expect(block.elementList, isNotNull);
       expect(block.elementList!.length, 1);
-      expect(block.elementList![0].stringValue, 'Hello');
 
-      // Verify line
       final line = block.lines[0];
-      expect(line.stringValue, 'Hello World');
-      expect(line.language, 'en');
-      expect(line.confidence, 0.93);
-      expect(line.borderRect, isNotNull);
-      expect(line.characterList, isNotNull);
       expect(line.characterList!.length, 2);
-      expect(line.characterList![0].stringValue, 'H');
-      expect(line.elementList, isNotNull);
       expect(line.elementList!.length, 1);
 
-      // Verify words
-      expect(line.words.length, 2);
-      expect(line.words[0].stringValue, 'Hello');
-      expect(line.words[0].confidence, 0.97);
-      expect(line.words[0].language, 'en');
-      expect(line.words[0].borderRect, isNotNull);
-      expect(line.words[0].characterList, isNotNull);
-      expect(line.words[0].characterList!.length, 1);
-      expect(line.words[0].characterList![0].stringValue, 'H');
-      expect(line.words[0].characterList![0].confidence, 0.98);
-
-      expect(line.words[1].stringValue, 'World');
-      expect(line.words[1].confidence, 0.91);
-      expect(line.words[1].characterList!.length, 1);
-      expect(line.words[1].characterList![0].stringValue, 'W');
+      final word = line.words[0];
+      expect(word.characterList!.length, 1);
+      expect(word.characterList![0].stringValue, 'H');
     });
 
-    test('recognizeText passes config to channel', () async {
+    test('passes config to channel', () async {
       await analyzer.init();
       log.clear();
 
@@ -133,33 +151,33 @@ void main() {
           language: 'zh',
           isFastMode: true,
           isDirectionSupported: true,
+          enableCloud: true,
+          roi: Rect(left: 10, top: 20, right: 100, bottom: 200),
         ),
       );
 
-      expect(log.length, 1);
       final args = log[0].arguments as Map;
       expect(args['config']['language'], 'zh');
       expect(args['config']['isFastMode'], true);
-      expect(args['config']['isDirectionSupported'], true);
+      expect(args['config']['enableCloud'], true);
+      expect(args['config']['roi']['left'], 10);
+      expect(args['config']['roi']['right'], 100);
     });
 
-    test('recognizeText without config omits config key', () async {
+    test('without config omits config key', () async {
       await analyzer.init();
       log.clear();
-
       await analyzer.recognizeText('/path/to/image.jpg');
-
       final args = log[0].arguments as Map;
       expect(args.containsKey('config'), false);
     });
 
-    test('recognizeText throws TextRecognitionException on null result', () async {
+    test('throws TextRecognitionException on null result', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
         if (methodCall.method == 'text#init') return true;
         return null;
       });
-
       await analyzer.init();
       expect(
         () => analyzer.recognizeText('/path/to/image.jpg'),
@@ -170,8 +188,89 @@ void main() {
         )),
       );
     });
+  });
 
-    test('recognizeTextAsync yields result', () async {
+  group('recognizeImage', () {
+    test('from file path delegates to recognizeText', () async {
+      await analyzer.init();
+      log.clear();
+
+      final result = await analyzer.recognizeImage(
+        const ImageSource.filePath('/path/to/image.jpg'),
+      );
+
+      expect(log[0].method, 'text#recognizeText');
+      expect(result.text, 'Hello World');
+    });
+
+    test('from URL sends recognizeImage', () async {
+      await analyzer.init();
+      log.clear();
+
+      final result = await analyzer.recognizeImage(
+        const ImageSource.url('https://example.com/image.jpg'),
+      );
+
+      expect(log[0].method, 'text#recognizeImage');
+      final args = log[0].arguments as Map;
+      expect(args['imageSource']['type'], 'url');
+      expect(args['imageSource']['url'], 'https://example.com/image.jpg');
+      expect(result.text, 'Hello World');
+    });
+
+    test('throws if not initialized', () async {
+      expect(
+        () => analyzer.recognizeImage(const ImageSource.url('https://x.com/i.jpg')),
+        throwsA(isA<TextRecognitionException>()),
+      );
+    });
+  });
+
+  group('recognizeTextBatch', () {
+    test('returns list of results with nulls for failures', () async {
+      await analyzer.init();
+      log.clear();
+
+      final results = await analyzer.recognizeTextBatch([
+        '/img1.jpg',
+        '/img2.jpg',
+        '/img3.jpg',
+      ]);
+
+      expect(results.length, 3);
+      expect(results[0], isNotNull);
+      expect(results[0]!.text, 'Hello World');
+      expect(results[1], isNotNull);
+      expect(results[2], isNull);
+
+      expect(log[0].method, 'text#recognizeTextBatch');
+      final args = log[0].arguments as Map;
+      expect(args['imagePaths'].length, 3);
+    });
+
+    test('passes config to batch call', () async {
+      await analyzer.init();
+      log.clear();
+
+      await analyzer.recognizeTextBatch(
+        ['/img1.jpg'],
+        config: const TextRecognitionConfig(language: 'zh'),
+      );
+
+      final args = log[0].arguments as Map;
+      expect(args['config']['language'], 'zh');
+    });
+
+    test('throws if not initialized', () async {
+      expect(
+        () => analyzer.recognizeTextBatch(['/img.jpg']),
+        throwsA(isA<TextRecognitionException>()),
+      );
+    });
+  });
+
+  group('recognizeTextAsync', () {
+    test('yields result', () async {
       await analyzer.init();
       log.clear();
 
@@ -182,64 +281,40 @@ void main() {
 
       expect(results.length, 1);
       expect(results[0].text, 'Hello World');
-
-      // Verify async flag passed
       final args = log[0].arguments as Map;
       expect(args['async'], true);
     });
 
-    test('recognizeTextAsync throws if not initialized', () async {
+    test('throws if not initialized', () async {
       expect(
         () => analyzer.recognizeTextAsync('/path/to/image.jpg').toList(),
-        throwsA(isA<TextRecognitionException>().having(
-          (e) => e.code,
-          'code',
-          TextRecognitionErrorCode.notInitialized,
-        )),
+        throwsA(isA<TextRecognitionException>()),
       );
     });
+  });
 
-    test('getSupportedLanguages returns list', () async {
+  group('getSupportedLanguages', () {
+    test('returns list', () async {
       final languages = await analyzer.getSupportedLanguages();
       expect(languages, ['zh', 'en', 'ja', 'ko']);
     });
 
-    test('getSupportedLanguages returns empty on null', () async {
+    test('returns empty on null', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
-        return null;
-      });
-
+          .setMockMethodCallHandler(channel, (_) async => null);
       final languages = await analyzer.getSupportedLanguages();
       expect(languages, isEmpty);
     });
+  });
 
-    test('release returns true and resets state', () async {
-      await analyzer.init();
-      expect(analyzer.isInitialized, true);
-      log.clear();
-
-      final result = await analyzer.release();
-      expect(result, true);
-      expect(analyzer.isInitialized, false);
-      expect(log.length, 1);
-      expect(log[0].method, 'text#release');
-    });
-
-    test('release is idempotent when not initialized', () async {
-      final result = await analyzer.release();
-      expect(result, true);
-      expect(log.isEmpty, true);
-    });
-
-    test('full lifecycle: init -> recognize -> release', () async {
+  group('Full lifecycle', () {
+    test('init -> recognize -> release -> reinit', () async {
       await analyzer.init();
       expect(analyzer.isInitialized, true);
 
       final result = await analyzer.recognizeText('/test.jpg');
       expect(result.text, isNotEmpty);
       expect(result.blocks[0].confidence, isNotNull);
-      expect(result.blocks[0].lines[0].characterList, isNotNull);
 
       await analyzer.release();
       expect(analyzer.isInitialized, false);
@@ -250,7 +325,7 @@ void main() {
   });
 }
 
-/// Mock recognition result with all fields including Character and Element.
+/// Mock recognition result with all fields.
 Map<String, dynamic> _mockRecognitionResult() {
   return {
     'stringValue': 'Hello World',

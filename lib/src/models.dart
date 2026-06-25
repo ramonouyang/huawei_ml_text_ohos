@@ -6,6 +6,8 @@
 /// Structure: TextRecognitionResult → TextBlock → TextLine → TextWord → Character
 /// Each level includes position (Rect), corner points, confidence, and language.
 
+import 'dart:typed_data';
+
 // ============================================================================
 // Helper types
 // ============================================================================
@@ -396,7 +398,7 @@ class TextRecognitionResult {
 
 /// Text recognition configuration.
 ///
-/// Controls language, recognition mode, and other parameters.
+/// Controls language, recognition mode, cloud/offline, and other parameters.
 class TextRecognitionConfig {
   /// Single language to recognize (e.g. "zh", "en").
   /// Mutually exclusive with [languageList].
@@ -412,11 +414,20 @@ class TextRecognitionConfig {
   /// Whether to detect text direction (0°/90°/180°/270°).
   final bool? isDirectionSupported;
 
+  /// Enable cloud-based recognition (higher accuracy, requires network).
+  /// Default: false (offline mode).
+  final bool? enableCloud;
+
+  /// Region of interest — crop to this rectangle before recognition.
+  final Rect? roi;
+
   const TextRecognitionConfig({
     this.language,
     this.languageList,
     this.isFastMode,
     this.isDirectionSupported,
+    this.enableCloud,
+    this.roi,
   });
 
   Map<String, dynamic> toMap() {
@@ -426,7 +437,51 @@ class TextRecognitionConfig {
       if (isFastMode != null) 'isFastMode': isFastMode,
       if (isDirectionSupported != null)
         'isDirectionSupported': isDirectionSupported,
+      if (enableCloud != null) 'enableCloud': enableCloud,
+      if (roi != null)
+        'roi': {
+          'left': roi!.left,
+          'top': roi!.top,
+          'right': roi!.right,
+          'bottom': roi!.bottom,
+        },
     };
+  }
+}
+
+/// Image source for text recognition.
+///
+/// Supports file path, URL, or raw bytes.
+class ImageSource {
+  final String? filePath;
+  final String? url;
+  final Uint8List? bytes;
+
+  const ImageSource._({this.filePath, this.url, this.bytes});
+
+  /// Create from a local file path.
+  const ImageSource.filePath(String path) : this._(filePath: path);
+
+  /// Create from a remote URL.
+  const ImageSource.url(String imageUrl) : this._(url: imageUrl);
+
+  /// Create from raw image bytes.
+  const ImageSource.bytes(Uint8List imageBytes) : this._(bytes: imageBytes);
+
+  /// Whether this source is a file path.
+  bool get isFilePath => filePath != null;
+
+  /// Whether this source is a URL.
+  bool get isUrl => url != null;
+
+  /// Whether this source is raw bytes.
+  bool get isBytes => bytes != null;
+
+  Map<String, dynamic> toMap() {
+    if (filePath != null) return {'type': 'filePath', 'path': filePath};
+    if (url != null) return {'type': 'url', 'url': url};
+    if (bytes != null) return {'type': 'bytes', 'data': bytes};
+    return {};
   }
 }
 

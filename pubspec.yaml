@@ -1,6 +1,6 @@
 name: huawei_ml_text_ohos
 description: HarmonyOS Core Vision Kit text recognition plugin for Flutter. Wraps @kit.CoreVisionKit textRecognition API via MethodChannel.
-version: 0.3.0
+version: 1.0.0
 homepage: https://github.com/ramonouyang/huawei_ml_text_ohos
 
 environment:

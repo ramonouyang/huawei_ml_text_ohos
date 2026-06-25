@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:huawei_ml_text_ohos/src/models.dart';
 
@@ -263,11 +264,19 @@ void main() {
         language: 'zh',
         isFastMode: true,
         isDirectionSupported: true,
+        enableCloud: true,
+        roi: Rect(left: 10, top: 20, right: 100, bottom: 200),
       );
       final map = config.toMap();
       expect(map['language'], 'zh');
       expect(map['isFastMode'], true);
       expect(map['isDirectionSupported'], true);
+      expect(map['enableCloud'], true);
+      expect(map['roi'], isNotNull);
+      expect(map['roi']['left'], 10);
+      expect(map['roi']['top'], 20);
+      expect(map['roi']['right'], 100);
+      expect(map['roi']['bottom'], 200);
     });
 
     test('toMap with languageList', () {
@@ -282,6 +291,40 @@ void main() {
       const config = TextRecognitionConfig();
       final map = config.toMap();
       expect(map.isEmpty, true);
+    });
+  });
+
+  group('ImageSource', () {
+    test('filePath creates correct source', () {
+      const source = ImageSource.filePath('/path/to/image.jpg');
+      expect(source.isFilePath, true);
+      expect(source.isUrl, false);
+      expect(source.isBytes, false);
+      expect(source.filePath, '/path/to/image.jpg');
+      final map = source.toMap();
+      expect(map['type'], 'filePath');
+      expect(map['path'], '/path/to/image.jpg');
+    });
+
+    test('url creates correct source', () {
+      const source = ImageSource.url('https://example.com/image.jpg');
+      expect(source.isFilePath, false);
+      expect(source.isUrl, true);
+      expect(source.isBytes, false);
+      expect(source.url, 'https://example.com/image.jpg');
+      final map = source.toMap();
+      expect(map['type'], 'url');
+      expect(map['url'], 'https://example.com/image.jpg');
+    });
+
+    test('bytes creates correct source', () {
+      final source = ImageSource.bytes(Uint8List.fromList([1, 2, 3]));
+      expect(source.isFilePath, false);
+      expect(source.isUrl, false);
+      expect(source.isBytes, true);
+      expect(source.bytes, isNotNull);
+      final map = source.toMap();
+      expect(map['type'], 'bytes');
     });
   });
 
