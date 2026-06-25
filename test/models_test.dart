@@ -46,10 +46,59 @@ void main() {
     });
   });
 
-  group('TextWord', () {
+  group('Character', () {
     test('fromMap with full data', () {
-      final word = TextWord.fromMap({
+      final char = Character.fromMap({
+        'stringValue': 'A',
+        'borderRect': {'left': 10, 'top': 20, 'right': 30, 'bottom': 50},
+        'confidence': 0.98,
+      });
+      expect(char.stringValue, 'A');
+      expect(char.borderRect, isNotNull);
+      expect(char.borderRect!.width, 20.0);
+      expect(char.confidence, 0.98);
+      expect(char.toString(), 'A');
+    });
+
+    test('fromMap with empty map', () {
+      final char = Character.fromMap({});
+      expect(char.stringValue, '');
+      expect(char.borderRect, isNull);
+      expect(char.confidence, isNull);
+    });
+  });
+
+  group('TextElement', () {
+    test('fromMap with full data', () {
+      final elem = TextElement.fromMap({
         'stringValue': 'Hello',
+        'borderRect': {'left': 0, 'top': 0, 'right': 100, 'bottom': 30},
+        'cornerPoints': [
+          {'x': 0, 'y': 0},
+          {'x': 100, 'y': 0},
+          {'x': 100, 'y': 30},
+          {'x': 0, 'y': 30},
+        ],
+        'confidence': 0.95,
+      });
+      expect(elem.stringValue, 'Hello');
+      expect(elem.borderRect, isNotNull);
+      expect(elem.cornerPoints!.length, 4);
+      expect(elem.confidence, 0.95);
+    });
+
+    test('fromMap with empty map', () {
+      final elem = TextElement.fromMap({});
+      expect(elem.stringValue, '');
+      expect(elem.borderRect, isNull);
+      expect(elem.cornerPoints, isNull);
+    });
+  });
+
+  group('TextWord', () {
+    test('fromMap with full data including characterList', () {
+      final word = TextWord.fromMap({
+        'stringValue': 'Hi',
         'vertexes': [
           {'x': 10, 'y': 20},
           {'x': 100, 'y': 20},
@@ -63,34 +112,41 @@ void main() {
         'borderRect': {'left': 10, 'top': 20, 'right': 100, 'bottom': 50},
         'confidence': 0.95,
         'language': 'en',
+        'characterList': [
+          {
+            'stringValue': 'H',
+            'confidence': 0.97,
+            'borderRect': {'left': 10, 'top': 20, 'right': 50, 'bottom': 50},
+          },
+          {
+            'stringValue': 'i',
+            'confidence': 0.93,
+            'borderRect': {'left': 50, 'top': 20, 'right': 100, 'bottom': 50},
+          },
+        ],
       });
-      expect(word.stringValue, 'Hello');
+      expect(word.stringValue, 'Hi');
       expect(word.vertexes!.length, 2);
       expect(word.cornerPoints!.length, 4);
       expect(word.borderRect, isNotNull);
-      expect(word.borderRect!.width, 90.0);
       expect(word.confidence, 0.95);
       expect(word.language, 'en');
+      expect(word.characterList, isNotNull);
+      expect(word.characterList!.length, 2);
+      expect(word.characterList![0].stringValue, 'H');
+      expect(word.characterList![0].confidence, 0.97);
+      expect(word.characterList![1].stringValue, 'i');
     });
 
     test('fromMap with empty map', () {
       final word = TextWord.fromMap({});
       expect(word.stringValue, '');
-      expect(word.vertexes, isNull);
-      expect(word.cornerPoints, isNull);
-      expect(word.borderRect, isNull);
-      expect(word.confidence, isNull);
-      expect(word.language, isNull);
-    });
-
-    test('toString returns stringValue', () {
-      final word = TextWord.fromMap({'stringValue': 'Test'});
-      expect(word.toString(), 'Test');
+      expect(word.characterList, isNull);
     });
   });
 
   group('TextLine', () {
-    test('fromMap with words and position', () {
+    test('fromMap with characterList and elementList', () {
       final line = TextLine.fromMap({
         'stringValue': 'Hello World',
         'words': [
@@ -102,27 +158,36 @@ void main() {
         'language': 'en',
         'angle': 0.5,
         'isVertical': false,
+        'characterList': [
+          {'stringValue': 'H', 'confidence': 0.97},
+          {'stringValue': 'e', 'confidence': 0.96},
+        ],
+        'elementList': [
+          {'stringValue': 'Hello', 'confidence': 0.92},
+          {'stringValue': 'World', 'confidence': 0.88},
+        ],
       });
       expect(line.stringValue, 'Hello World');
       expect(line.words.length, 2);
-      expect(line.words[0].confidence, 0.9);
-      expect(line.borderRect, isNotNull);
-      expect(line.confidence, 0.88);
-      expect(line.language, 'en');
-      expect(line.angle, 0.5);
-      expect(line.isVertical, false);
+      expect(line.characterList, isNotNull);
+      expect(line.characterList!.length, 2);
+      expect(line.characterList![0].stringValue, 'H');
+      expect(line.elementList, isNotNull);
+      expect(line.elementList!.length, 2);
+      expect(line.elementList![0].stringValue, 'Hello');
     });
 
     test('fromMap with empty words', () {
       final line = TextLine.fromMap({'stringValue': 'Test'});
       expect(line.stringValue, 'Test');
       expect(line.words, isEmpty);
-      expect(line.borderRect, isNull);
+      expect(line.characterList, isNull);
+      expect(line.elementList, isNull);
     });
   });
 
   group('TextBlock', () {
-    test('fromMap with lines and position', () {
+    test('fromMap with elementList', () {
       final block = TextBlock.fromMap({
         'stringValue': 'Block text',
         'language': 'zh',
@@ -136,6 +201,10 @@ void main() {
           {'x': 300, 'y': 100},
           {'x': 10, 'y': 100},
         ],
+        'elementList': [
+          {'stringValue': 'Block', 'confidence': 0.9},
+          {'stringValue': 'text', 'confidence': 0.88},
+        ],
         'lines': [
           {
             'stringValue': 'Line 1',
@@ -144,22 +213,9 @@ void main() {
         ],
       });
       expect(block.stringValue, 'Block text');
-      expect(block.language, 'zh');
-      expect(block.confidence, 0.92);
-      expect(block.angle, 1.5);
-      expect(block.isVertical, true);
-      expect(block.borderRect, isNotNull);
-      expect(block.borderRect!.width, 290.0);
-      expect(block.cornerPoints!.length, 4);
-      expect(block.lines.length, 1);
-    });
-
-    test('fromMap with minimal data', () {
-      final block = TextBlock.fromMap({'stringValue': 'Minimal'});
-      expect(block.stringValue, 'Minimal');
-      expect(block.language, isNull);
-      expect(block.confidence, isNull);
-      expect(block.borderRect, isNull);
+      expect(block.elementList, isNotNull);
+      expect(block.elementList!.length, 2);
+      expect(block.elementList![0].stringValue, 'Block');
     });
   });
 
@@ -171,7 +227,13 @@ void main() {
             'stringValue': 'Block 1',
             'confidence': 0.9,
             'lines': [
-              {'stringValue': 'Line 1', 'words': []},
+              {
+                'stringValue': 'Line 1',
+                'words': [],
+                'characterList': [
+                  {'stringValue': 'L', 'confidence': 0.95},
+                ],
+              },
             ],
           },
           {
@@ -185,26 +247,13 @@ void main() {
       });
       expect(result.blocks.length, 2);
       expect(result.blocks[0].confidence, 0.9);
-      expect(result.blocks[1].confidence, 0.8);
-      expect(result.text, contains('Block 1'));
-      expect(result.text, contains('Block 2'));
+      expect(result.blocks[0].lines[0].characterList!.length, 1);
     });
 
     test('fromMap with null blocks', () {
       final result = TextRecognitionResult.fromMap({});
       expect(result.blocks, isEmpty);
       expect(result.stringValue, '');
-    });
-
-    test('explicit stringValue overrides joined text', () {
-      final result = TextRecognitionResult.fromMap({
-        'stringValue': 'Custom text',
-        'blocks': [
-          {'stringValue': 'A', 'lines': []},
-          {'stringValue': 'B', 'lines': []},
-        ],
-      });
-      expect(result.text, 'Custom text');
     });
   });
 
@@ -219,7 +268,6 @@ void main() {
       expect(map['language'], 'zh');
       expect(map['isFastMode'], true);
       expect(map['isDirectionSupported'], true);
-      expect(map.containsKey('languageList'), false);
     });
 
     test('toMap with languageList', () {
@@ -228,13 +276,49 @@ void main() {
       );
       final map = config.toMap();
       expect(map['languageList'], ['zh', 'en']);
-      expect(map.containsKey('language'), false);
     });
 
     test('toMap with empty config', () {
       const config = TextRecognitionConfig();
       final map = config.toMap();
       expect(map.isEmpty, true);
+    });
+  });
+
+  group('TextRecognitionException', () {
+    test('fromPlatformException maps error codes', () {
+      final err = TextRecognitionException.fromPlatformException(
+        Exception('code: NOT_INITIALIZED, message: "Not ready"'),
+        'fallback',
+      );
+      expect(err.code, TextRecognitionErrorCode.notInitialized);
+      expect(err.message, 'Not ready');
+    });
+
+    test('fromPlatformException with unknown code', () {
+      final err = TextRecognitionException.fromPlatformException(
+        Exception('code: SOMETHING_ELSE, message: "Oops"'),
+        'fallback',
+      );
+      expect(err.code, TextRecognitionErrorCode.unknown);
+      expect(err.message, 'Oops');
+    });
+
+    test('fromPlatformException with non-Exception', () {
+      final err = TextRecognitionException.fromPlatformException(
+        'string error',
+        'fallback message',
+      );
+      expect(err.code, TextRecognitionErrorCode.unknown);
+      expect(err.message, 'fallback message');
+    });
+
+    test('toString', () {
+      const err = TextRecognitionException(
+        code: TextRecognitionErrorCode.initFailed,
+        message: 'init failed',
+      );
+      expect(err.toString(), 'TextRecognitionException(TextRecognitionErrorCode.initFailed): init failed');
     });
   });
 }

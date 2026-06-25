@@ -54,10 +54,6 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
   }
 
-  /**
-   * Initialize the text recognition engine.
-   * Returns true on success.
-   */
   private handleInit(result: MethodResult): void {
     if (this.initialized) {
       result.success(true);
@@ -74,11 +70,6 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
   }
 
-  /**
-   * Recognize text in the image at the given path.
-   * Input: { imagePath: string, config?: { language?, languageList?, isFastMode?, isDirectionSupported? } }
-   * Output: { blocks: [...], stringValue: string }
-   */
   private handleRecognizeText(call: MethodCall, result: MethodResult): void {
     if (!this.initialized) {
       result.error('NOT_INITIALIZED', 'Call text#init first', null);
@@ -96,7 +87,6 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
         uri: imagePath
       };
 
-      // Build configuration from optional config parameter
       const configMap = call.argument('config') as Record<string, Object> | undefined;
       const config = this.buildConfig(configMap);
 
@@ -116,9 +106,6 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
   }
 
-  /**
-   * Build TextRecognitionConfiguration from Dart config map.
-   */
   private buildConfig(configMap: Record<string, Object> | undefined): textRecognition.TextRecognitionConfiguration {
     const config: textRecognition.TextRecognitionConfiguration = {};
 
@@ -142,10 +129,6 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     return config;
   }
 
-  /**
-   * Get list of supported languages.
-   * Output: string[]
-   */
   private handleGetSupportedLanguages(result: MethodResult): void {
     try {
       const languages = textRecognition.getSupportedLanguages();
@@ -156,10 +139,6 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
     }
   }
 
-  /**
-   * Release the recognition engine.
-   * Returns true on success.
-   */
   private handleRelease(result: MethodResult): void {
     this.doRelease();
     result.success(true);
@@ -178,43 +157,25 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
   /**
    * Convert ArkTS TextRecognitionResult to a Map for Dart.
    *
-   * Structure:
+   * Full structure with all fields:
    * {
    *   stringValue: string,
-   *   blocks: [
-   *     {
-   *       stringValue: string,
-   *       language: string,
-   *       confidence: number,
-   *       angle: number,
-   *       isVertical: boolean,
-   *       vertexes: [{x, y}],
-   *       cornerPoints: [{x, y}],
-   *       borderRect: {left, top, right, bottom},
-   *       lines: [
-   *         {
-   *           stringValue: string,
-   *           language: string,
-   *           confidence: number,
-   *           angle: number,
-   *           isVertical: boolean,
-   *           vertexes: [{x, y}],
-   *           cornerPoints: [{x, y}],
-   *           borderRect: {left, top, right, bottom},
-   *           words: [
-   *             {
-   *               stringValue: string,
-   *               language: string,
-   *               confidence: number,
-   *               vertexes: [{x, y}],
-   *               cornerPoints: [{x, y}],
-   *               borderRect: {left, top, right, bottom}
-   *             }
-   *           ]
-   *         }
-   *       ]
-   *     }
-   *   ]
+   *   blocks: [{
+   *     stringValue, language, confidence, angle, isVertical,
+   *     vertexes, cornerPoints, borderRect,
+   *     elementList: [{ stringValue, borderRect, cornerPoints, confidence }],
+   *     lines: [{
+   *       stringValue, language, confidence, angle, isVertical,
+   *       vertexes, cornerPoints, borderRect,
+   *       characterList: [{ stringValue, borderRect, confidence }],
+   *       elementList: [{ stringValue, borderRect, cornerPoints, confidence }],
+   *       words: [{
+   *         stringValue, language, confidence,
+   *         vertexes, cornerPoints, borderRect,
+   *         characterList: [{ stringValue, borderRect, confidence }]
+   *       }]
+   *     }]
+   *   }]
    * }
    */
   private convertResult(result: textRecognition.TextRecognitionResult): object {
@@ -227,6 +188,7 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
       vertexes: this.convertPoints(block.vertexes),
       cornerPoints: this.convertPoints(block.cornerPoints),
       borderRect: this.convertRect(block.borderRect),
+      elementList: this.convertElements(block.elementList),
       lines: (block.lines ?? []).map((line) => ({
         stringValue: line.stringValue ?? '',
         language: line.language ?? '',
@@ -236,6 +198,8 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
         vertexes: this.convertPoints(line.vertexes),
         cornerPoints: this.convertPoints(line.cornerPoints),
         borderRect: this.convertRect(line.borderRect),
+        characterList: this.convertCharacters(line.characterList),
+        elementList: this.convertElements(line.elementList),
         words: (line.words ?? []).map((word) => ({
           stringValue: word.stringValue ?? '',
           language: word.language ?? '',
@@ -243,6 +207,7 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
           vertexes: this.convertPoints(word.vertexes),
           cornerPoints: this.convertPoints(word.cornerPoints),
           borderRect: this.convertRect(word.borderRect),
+          characterList: this.convertCharacters(word.characterList),
         })),
       })),
     }));
@@ -268,5 +233,24 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin {
       right: rect.right ?? 0,
       bottom: rect.bottom ?? 0,
     };
+  }
+
+  private convertCharacters(chars: textRecognition.TextCharacter[] | undefined): object[] {
+    if (!chars) return [];
+    return chars.map((c) => ({
+      stringValue: c.stringValue ?? '',
+      confidence: c.confidence ?? -1,
+      borderRect: this.convertRect(c.borderRect),
+    }));
+  }
+
+  private convertElements(elements: textRecognition.TextElement[] | undefined): object[] {
+    if (!elements) return [];
+    return elements.map((e) => ({
+      stringValue: e.stringValue ?? '',
+      confidence: e.confidence ?? -1,
+      borderRect: this.convertRect(e.borderRect),
+      cornerPoints: this.convertPoints(e.cornerPoints),
+    }));
   }
 }
