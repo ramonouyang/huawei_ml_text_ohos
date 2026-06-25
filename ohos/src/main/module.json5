@@ -1,0 +1,10 @@
+{
+  "module": {
+    "name": "huawei_ml_text_ohos",
+    "type": "har",
+    "deviceTypes": [
+      "phone",
+      "tablet"
+    ]
+  }
+}
