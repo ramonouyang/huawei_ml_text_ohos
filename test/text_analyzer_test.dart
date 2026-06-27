@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:huawei_ml_text_ohos/src/models.dart';
@@ -215,6 +216,24 @@ void main() {
       final args = log[0].arguments as Map;
       expect(args['imageSource']['type'], 'url');
       expect(args['imageSource']['url'], 'https://example.com/image.jpg');
+      expect(result.text, 'Hello World');
+    });
+
+    test('from bytes sends recognizeImage with bytes data', () async {
+      await analyzer.init();
+      log.clear();
+
+      final bytes = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]); // PNG header
+      final result = await analyzer.recognizeImage(
+        ImageSource.bytes(bytes),
+        config: const TextRecognitionConfig(language: 'zh'),
+      );
+
+      expect(log[0].method, 'text#recognizeImage');
+      final args = log[0].arguments as Map;
+      expect(args['imageSource']['type'], 'bytes');
+      expect(args['imageSource']['data'], isNotNull);
+      expect(args['config']['language'], 'zh');
       expect(result.text, 'Hello World');
     });
 

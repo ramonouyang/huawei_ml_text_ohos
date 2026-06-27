@@ -253,8 +253,15 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
     if (sourceType === 'filePath') {
       const path: string = imageSource['path'] as string;
       this.recognizeFromFile(path, config, result);
+    } else if (sourceType === 'bytes') {
+      const data: Uint8Array = imageSource['data'] as Uint8Array;
+      if (!data) {
+        result.error('INVALID_ARGS', 'bytes data is required', null);
+        return;
+      }
+      this.recognizeFromBytes(data, config, result);
     } else {
-      result.error('INVALID_ARGS', `Unsupported image source type: ${sourceType}. Only filePath is supported.`, null);
+      result.error('INVALID_ARGS', `Unsupported image source type: ${sourceType}. Supported: filePath, bytes.`, null);
     }
   }
 
@@ -314,11 +321,32 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
       })
       .then((recognitionResult: textRecognition.TextRecognitionResult) => {
         const resultMap: TextRecognitionResultMap = this.convertResult(recognitionResult);
-        hilog.info(LOG_DOMAIN, TAG, `Recognized ${resultMap.blocks.length} blocks`);
+        hilog.info(LOG_DOMAIN, TAG, `Recognized ${resultMap.blocks.length} blocks from file`);
         result.success(resultMap);
       })
       .catch((err: Error) => {
-        hilog.error(LOG_DOMAIN, TAG, `recognizeText failed: ${err.message}`);
+        hilog.error(LOG_DOMAIN, TAG, `recognizeText from file failed: ${err.message}`);
+        result.error('RECOGNIZE_FAILED', err.message, null);
+      });
+  }
+
+  private recognizeFromBytes(
+    data: Uint8Array,
+    config: textRecognition.TextRecognitionConfiguration,
+    result: MethodResult
+  ): void {
+    this.loadPixelMapFromBytes(data)
+      .then((pixelMap: image.PixelMap) => {
+        const visionInfo: textRecognition.VisionInfo = { pixelMap: pixelMap };
+        return textRecognition.recognizeText(visionInfo, config);
+      })
+      .then((recognitionResult: textRecognition.TextRecognitionResult) => {
+        const resultMap: TextRecognitionResultMap = this.convertResult(recognitionResult);
+        hilog.info(LOG_DOMAIN, TAG, `Recognized ${resultMap.blocks.length} blocks from bytes`);
+        result.success(resultMap);
+      })
+      .catch((err: Error) => {
+        hilog.error(LOG_DOMAIN, TAG, `recognizeText from bytes failed: ${err.message}`);
         result.error('RECOGNIZE_FAILED', err.message, null);
       });
   }
@@ -342,6 +370,13 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
     }
   }
 
+  private async loadPixelMapFromBytes(data: Uint8Array): Promise<image.PixelMap> {
+    const buffer: ArrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    const imageSource: image.ImageSource = image.createImageSource(buffer);
+    const pixelMap: image.PixelMap = await imageSource.createPixelMap();
+    return pixelMap;
+  }
+
   // ==========================================================================
   // Config & conversion helpers
   // ==========================================================================
@@ -350,8 +385,38 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
     const config: textRecognition.TextRecognitionConfiguration = {};
 
     if (configMap) {
+      // Language settings
+      if (configMap['language'] !== undefined) {
+        config.language = configMap['language'] as string;
+      }
+      if (configMap['languageList'] !== undefined) {
+        config.languageList = configMap['languageList'] as string[];
+      }
+
+      // Recognition mode
+      if (configMap['isFastMode'] !== undefined) {
+        config.isFastMode = configMap['isFastMode'] as boolean;
+      }
       if (configMap['isDirectionSupported'] !== undefined) {
         config.isDirectionDetectionSupported = configMap['isDirectionSupported'] as boolean;
+      }
+
+      // Cloud recognition (if supported by the API)
+      if (configMap['enableCloud'] !== undefined) {
+        config.enableCloud = configMap['enableCloud'] as boolean;
+      }
+
+      // Region of interest (if supported by the API)
+      if (configMap['roi'] !== undefined) {
+        const roiMap = configMap['roi'] as Record<string, Object>;
+        if (roiMap) {
+          config.roi = {
+            left: roiMap['left'] as number,
+            top: roiMap['top'] as number,
+            right: roiMap['right'] as number,
+            bottom: roiMap['bottom'] as number,
+          };
+        }
       }
     }
 
@@ -392,16 +457,20 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
       (line: textRecognition.TextLine) => this.convertLine(line)
     );
 
+    const elements: ElementResult[] = (block.elements ?? []).map(
+      (element: textRecognition.TextElement) => this.convertElement(element)
+    );
+
     const blockResult: BlockResult = {
       stringValue: block.value ?? '',
-      language: '',
-      confidence: -1,
-      angle: 0,
-      isVertical: false,
-      vertexes: [],
-      cornerPoints: [],
-      borderRect: null,
-      elementList: [],
+      language: block.language ?? '',
+      confidence: block.confidence ?? -1,
+      angle: block.angle ?? 0,
+      isVertical: block.isVertical ?? false,
+      vertexes: this.convertPoints(block.vertexes),
+      cornerPoints: this.convertPoints(block.cornerPoints),
+      borderRect: this.convertRect(block.borderRect),
+      elementList: elements,
       lines: lines,
     };
     return blockResult;
@@ -412,33 +481,72 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
       (word: textRecognition.TextWord) => this.convertWord(word)
     );
 
+    const elements: ElementResult[] = (line.elements ?? []).map(
+      (element: textRecognition.TextElement) => this.convertElement(element)
+    );
+
+    const characters: CharacterResult[] = (line.characters ?? []).map(
+      (char: textRecognition.TextCharacter) => this.convertCharacter(char)
+    );
+
     const lineResult: LineResult = {
       stringValue: line.value ?? '',
-      language: '',
-      confidence: -1,
-      angle: 0,
-      isVertical: false,
-      vertexes: [],
+      language: line.language ?? '',
+      confidence: line.confidence ?? -1,
+      angle: line.angle ?? 0,
+      isVertical: line.isVertical ?? false,
+      vertexes: this.convertPoints(line.vertexes),
       cornerPoints: this.convertPoints(line.cornerPoints),
-      borderRect: null,
-      characterList: [],
-      elementList: [],
+      borderRect: this.convertRect(line.borderRect),
+      characterList: characters,
+      elementList: elements,
       words: words,
     };
     return lineResult;
   }
 
   private convertWord(word: textRecognition.TextWord): WordResult {
+    const characters: CharacterResult[] = (word.characters ?? []).map(
+      (char: textRecognition.TextCharacter) => this.convertCharacter(char)
+    );
+
     const wordResult: WordResult = {
       stringValue: word.value ?? '',
-      language: '',
-      confidence: -1,
-      vertexes: [],
+      language: word.language ?? '',
+      confidence: word.confidence ?? -1,
+      vertexes: this.convertPoints(word.vertexes),
       cornerPoints: this.convertPoints(word.cornerPoints),
-      borderRect: null,
-      characterList: [],
+      borderRect: this.convertRect(word.borderRect),
+      characterList: characters,
     };
     return wordResult;
+  }
+
+  private convertElement(element: textRecognition.TextElement): ElementResult {
+    return {
+      stringValue: element.value ?? '',
+      confidence: element.confidence ?? -1,
+      borderRect: this.convertRect(element.borderRect),
+      cornerPoints: this.convertPoints(element.cornerPoints),
+    };
+  }
+
+  private convertCharacter(char: textRecognition.TextCharacter): CharacterResult {
+    return {
+      stringValue: char.value ?? '',
+      confidence: char.confidence ?? -1,
+      borderRect: this.convertRect(char.borderRect),
+    };
+  }
+
+  private convertRect(rect: textRecognition.Rect | undefined | null): RectResult | null {
+    if (!rect) return null;
+    return {
+      left: rect.left ?? 0,
+      top: rect.top ?? 0,
+      right: rect.right ?? 0,
+      bottom: rect.bottom ?? 0,
+    };
   }
 
   private convertPoints(points: textRecognition.PixelPoint[] | undefined): PointResult[] {
