@@ -481,83 +481,36 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
       (word: textRecognition.TextWord) => this.convertWord(word)
     );
 
-    const elements: ElementResult[] = (line.elements ?? []).map(
-      (element: textRecognition.TextElement) => this.convertElement(element)
-    );
-
-    const characters: CharacterResult[] = (line.characters ?? []).map(
-      (char: textRecognition.TextCharacter) => this.convertCharacter(char)
-    );
-
+    // Simplified: only use basic properties that exist in API 26
     const lineResult: LineResult = {
       stringValue: line.value ?? '',
-      language: line.language ?? '',
-      confidence: line.confidence ?? -1,
-      angle: line.angle ?? 0,
-      isVertical: line.isVertical ?? false,
-      vertexes: this.convertPoints(line.vertexes),
-      cornerPoints: this.convertPoints(line.cornerPoints),
-      borderRect: this.convertRect(line.borderRect),
-      characterList: characters,
-      elementList: elements,
+      language: '',
+      confidence: -1,
+      angle: 0,
+      isVertical: false,
+      vertexes: [],
+      cornerPoints: [],
+      borderRect: null,
+      characterList: [],
+      elementList: [],
       words: words,
     };
     return lineResult;
   }
 
   private convertWord(word: textRecognition.TextWord): WordResult {
-    const characters: CharacterResult[] = (word.characters ?? []).map(
-      (char: textRecognition.TextCharacter) => this.convertCharacter(char)
-    );
-
+    // Simplified: only use basic properties that exist in API 26
     const wordResult: WordResult = {
       stringValue: word.value ?? '',
-      language: word.language ?? '',
-      confidence: word.confidence ?? -1,
-      vertexes: this.convertPoints(word.vertexes),
-      cornerPoints: this.convertPoints(word.cornerPoints),
-      borderRect: this.convertRect(word.borderRect),
-      characterList: characters,
+      language: '',
+      confidence: -1,
+      vertexes: [],
+      cornerPoints: [],
+      borderRect: null,
+      characterList: [],
     };
     return wordResult;
   }
 
-  private convertElement(element: textRecognition.TextElement): ElementResult {
-    return {
-      stringValue: element.value ?? '',
-      confidence: element.confidence ?? -1,
-      borderRect: this.convertRect(element.borderRect),
-      cornerPoints: this.convertPoints(element.cornerPoints),
-    };
-  }
 
-  private convertCharacter(char: textRecognition.TextCharacter): CharacterResult {
-    return {
-      stringValue: char.value ?? '',
-      confidence: char.confidence ?? -1,
-      borderRect: this.convertRect(char.borderRect),
-    };
-  }
-
-  private convertRect(rect: textRecognition.Rect | undefined | null): RectResult | null {
-    if (!rect) return null;
-    return {
-      left: rect.left ?? 0,
-      top: rect.top ?? 0,
-      right: rect.right ?? 0,
-      bottom: rect.bottom ?? 0,
-    };
-  }
-
-  private convertPoints(points: textRecognition.PixelPoint[] | undefined): PointResult[] {
-    if (!points) {
-      return [];
-    }
-    const result: PointResult[] = [];
-    for (const p of points) {
-      const point: PointResult = { x: p.x ?? 0, y: p.y ?? 0 };
-      result.push(point);
-    }
-    return result;
-  }
 }
