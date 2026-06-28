@@ -22,12 +22,6 @@ interface PointResult {
   y: number;
 }
 
-interface CharacterResult {
-  stringValue: string;
-  confidence: number;
-  borderRect: RectResult | null;
-}
-
 interface WordResult {
   stringValue: string;
   language: string;
@@ -35,7 +29,7 @@ interface WordResult {
   vertexes: PointResult[];
   cornerPoints: PointResult[];
   borderRect: RectResult | null;
-  characterList: CharacterResult[];
+  characterList: Object[];
 }
 
 interface LineResult {
@@ -47,8 +41,8 @@ interface LineResult {
   vertexes: PointResult[];
   cornerPoints: PointResult[];
   borderRect: RectResult | null;
-  characterList: CharacterResult[];
-  elementList: ElementResult[];
+  characterList: Object[];
+  elementList: Object[];
   words: WordResult[];
 }
 
@@ -61,7 +55,7 @@ interface BlockResult {
   vertexes: PointResult[];
   cornerPoints: PointResult[];
   borderRect: RectResult | null;
-  elementList: ElementResult[];
+  elementList: Object[];
   lines: LineResult[];
 }
 
@@ -77,15 +71,22 @@ interface RectResult {
   bottom: number;
 }
 
-interface ElementResult {
-  stringValue: string;
-  confidence: number;
-  borderRect: RectResult | null;
-  cornerPoints: PointResult[];
-}
-
 // ── Plugin ────────────────────────────────────────────────────────────────
 
+/**
+ * HarmonyOS NEXT OCR plugin using @hms.ai.ocr.textRecognition (HMS CoreVisionKit).
+ *
+ * API 26 actual interface:
+ *   TextRecognitionConfiguration: { isDirectionDetectionSupported?: boolean }
+ *   VisionInfo: { pixelMap: image.PixelMap }
+ *   TextRecognitionResult: { value: string, blocks: Array<TextBlock> }
+ *   TextBlock: { value: string, lines: Array<TextLine> }
+ *   TextLine: { value: string, cornerPoints: Array<PixelPoint>, words: Array<TextWord> }
+ *   TextWord: { value: string, cornerPoints: Array<PixelPoint> }
+ *   PixelPoint: { x: number, y: number }
+ *
+ * Functions: recognizeText, getSupportedLanguages, init, release
+ */
 export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHandler {
   private channel: MethodChannel | null = null;
   private initialized: boolean = false;
@@ -381,42 +382,18 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
   // Config & conversion helpers
   // ==========================================================================
 
+  /**
+   * Build TextRecognitionConfiguration.
+   * API 26 only supports: isDirectionDetectionSupported?: boolean
+   * Other config fields (language, languageList, isFastMode, enableCloud, roi)
+   * are NOT supported by this API version and are silently ignored.
+   */
   private buildConfig(configMap: Record<string, Object> | undefined): textRecognition.TextRecognitionConfiguration {
     const config: textRecognition.TextRecognitionConfiguration = {};
 
     if (configMap) {
-      // Language settings
-      if (configMap['language'] !== undefined) {
-        config.language = configMap['language'] as string;
-      }
-      if (configMap['languageList'] !== undefined) {
-        config.languageList = configMap['languageList'] as string[];
-      }
-
-      // Recognition mode
-      if (configMap['isFastMode'] !== undefined) {
-        config.isFastMode = configMap['isFastMode'] as boolean;
-      }
       if (configMap['isDirectionSupported'] !== undefined) {
         config.isDirectionDetectionSupported = configMap['isDirectionSupported'] as boolean;
-      }
-
-      // Cloud recognition (if supported by the API)
-      if (configMap['enableCloud'] !== undefined) {
-        config.enableCloud = configMap['enableCloud'] as boolean;
-      }
-
-      // Region of interest (if supported by the API)
-      if (configMap['roi'] !== undefined) {
-        const roiMap = configMap['roi'] as Record<string, Object>;
-        if (roiMap) {
-          config.roi = {
-            left: roiMap['left'] as number,
-            top: roiMap['top'] as number,
-            right: roiMap['right'] as number,
-            bottom: roiMap['bottom'] as number,
-          };
-        }
       }
     }
 
@@ -452,36 +429,39 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
     return result;
   }
 
+  /**
+   * Convert TextBlock → BlockResult.
+   * API 26 TextBlock: { value, lines }
+   */
   private convertBlock(block: textRecognition.TextBlock): BlockResult {
     const lines: LineResult[] = (block.lines ?? []).map(
       (line: textRecognition.TextLine) => this.convertLine(line)
     );
 
-    const elements: ElementResult[] = (block.elements ?? []).map(
-      (element: textRecognition.TextElement) => this.convertElement(element)
-    );
-
     const blockResult: BlockResult = {
       stringValue: block.value ?? '',
-      language: block.language ?? '',
-      confidence: block.confidence ?? -1,
-      angle: block.angle ?? 0,
-      isVertical: block.isVertical ?? false,
-      vertexes: this.convertPoints(block.vertexes),
-      cornerPoints: this.convertPoints(block.cornerPoints),
-      borderRect: this.convertRect(block.borderRect),
-      elementList: elements,
+      language: '',
+      confidence: -1,
+      angle: 0,
+      isVertical: false,
+      vertexes: [],
+      cornerPoints: [],
+      borderRect: null,
+      elementList: [],
       lines: lines,
     };
     return blockResult;
   }
 
+  /**
+   * Convert TextLine → LineResult.
+   * API 26 TextLine: { value, cornerPoints, words }
+   */
   private convertLine(line: textRecognition.TextLine): LineResult {
     const words: WordResult[] = (line.words ?? []).map(
       (word: textRecognition.TextWord) => this.convertWord(word)
     );
 
-    // Simplified: only use basic properties that exist in API 26
     const lineResult: LineResult = {
       stringValue: line.value ?? '',
       language: '',
@@ -489,7 +469,7 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
       angle: 0,
       isVertical: false,
       vertexes: [],
-      cornerPoints: [],
+      cornerPoints: this.convertCornerPoints(line.cornerPoints),
       borderRect: null,
       characterList: [],
       elementList: [],
@@ -498,19 +478,34 @@ export default class HuaweiMlTextPlugin implements FlutterPlugin, MethodCallHand
     return lineResult;
   }
 
+  /**
+   * Convert TextWord → WordResult.
+   * API 26 TextWord: { value, cornerPoints }
+   */
   private convertWord(word: textRecognition.TextWord): WordResult {
-    // Simplified: only use basic properties that exist in API 26
     const wordResult: WordResult = {
       stringValue: word.value ?? '',
       language: '',
       confidence: -1,
       vertexes: [],
-      cornerPoints: [],
+      cornerPoints: this.convertCornerPoints(word.cornerPoints),
       borderRect: null,
       characterList: [],
     };
     return wordResult;
   }
 
-
+  /**
+   * Convert API PixelPoint[] → PointResult[]
+   */
+  private convertCornerPoints(points: Array<textRecognition.PixelPoint> | undefined): PointResult[] {
+    if (!points) {
+      return [];
+    }
+    const result: PointResult[] = [];
+    for (const p of points) {
+      result.push({ x: p.x ?? 0, y: p.y ?? 0 });
+    }
+    return result;
+  }
 }
